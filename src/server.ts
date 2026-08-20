@@ -36,10 +36,10 @@ export function createNSL(config: NSLServerConfig = {}) {
     cached = { value: body.access_token, expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000 };
     return cached.value;
   }
-  async function request<T>(path: string, init: RequestInit, retry = true): Promise<T> {
+  async function request<T>(path: string, init: RequestInit, retry = true, acceptedStatuses: number[] = []): Promise<T> {
     const response = await fetcher(`${apiUrl}${path}`, { ...init, headers: { 'content-type': 'application/json', ...init.headers, authorization: `Bearer ${await token()}` } });
-    if (response.status === 401 && retry) { await token(true); return request<T>(path, init, false); }
-    if (!response.ok) throw new Error(`NSL API request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+    if (response.status === 401 && retry) { await token(true); return request<T>(path, init, false, acceptedStatuses); }
+    if (!response.ok && !acceptedStatuses.includes(response.status)) throw new Error(`NSL API request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
     return response.json() as Promise<T>;
   }
 
@@ -59,7 +59,7 @@ export function createNSL(config: NSLServerConfig = {}) {
       if (input.scope) query.set('scope', JSON.stringify(input.scope));
       return request<RecommendationsResponse>(`/recommendations?${query}`, { method: 'GET' });
     },
-    syncContent(items: ItemUpsertPayload | ItemUpsertPayload[]) { return request('/items', { method: 'POST', body: JSON.stringify(items) }); },
+    syncContent(items: ItemUpsertPayload | ItemUpsertPayload[]) { return request('/items', { method: 'POST', body: JSON.stringify(items) }, true, [409]); },
     flush() { return Promise.resolve(); },
   };
 }

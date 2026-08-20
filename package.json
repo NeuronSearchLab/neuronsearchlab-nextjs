@@ -1,6 +1,6 @@
 {
   "name": "@neuronsearchlab/nextjs",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Server-first NeuronSearchLab SDK for Next.js",
   "type": "module",
   "main": "dist/index.js",
