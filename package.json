@@ -1,6 +1,6 @@
 {
   "name": "@neuronsearchlab/nextjs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Server-first NeuronSearchLab SDK for Next.js",
   "type": "module",
   "main": "dist/index.js",
@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm test && npm run build"
