@@ -11,7 +11,7 @@ export type NSLTrackInput = {
 };
 
 export type NSLRecommendInput = { userId: string | number; context?: string; contextId?: string; limit?: number; scope?: Record<string, unknown> };
-export type NSLServerConfig = { apiUrl?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; fetch?: typeof fetch };
+export type NSLServerConfig = { apiUrl?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; contextId?: string; eventTypeIds?: Record<string, string>; fetch?: typeof fetch };
 
 function required(value: string | undefined, name: string) {
   if (!value?.trim()) throw new Error(`${name} is required. Connect an NSL Vercel resource or set it server-side.`);
@@ -24,6 +24,8 @@ export function createNSL(config: NSLServerConfig = {}) {
   const clientSecret = required(config.clientSecret ?? process.env.NSL_CLIENT_SECRET, 'NSL_CLIENT_SECRET');
   const tokenUrl = config.tokenUrl ?? process.env.NSL_TOKEN_URL ?? 'https://auth.neuronsearchlab.com/oauth2/token';
   const fetcher = config.fetch ?? fetch;
+  const defaultContextId = config.contextId ?? process.env.NSL_CONTEXT_ID;
+  const eventTypeIds = config.eventTypeIds ?? { view: process.env.NSL_EVENT_VIEW_ID ?? '', click: process.env.NSL_EVENT_CLICK_ID ?? '', purchase: process.env.NSL_EVENT_PURCHASE_ID ?? '' };
   let cached: { value: string; expiresAt: number } | undefined;
   async function token(force = false) {
     if (!force && cached && cached.expiresAt > Date.now() + 60_000) return cached.value;
@@ -44,15 +46,16 @@ export function createNSL(config: NSLServerConfig = {}) {
   return {
     track(input: NSLTrackInput) {
       return request('/events', { method: 'POST', body: JSON.stringify({
-        user_id: input.userId, type: input.event, item_id: input.itemId,
+        user_id: input.userId, type: eventTypeIds[input.event.toLowerCase()] || input.event, item_id: input.itemId,
         ...(input.requestId ? { request_id: input.requestId } : {}),
         ...(input.sessionId ? { session_id: input.sessionId } : {}),
         ...(input.metadata ?? {}), client_ts: new Date().toISOString(),
       }) });
     },
     recommend(input: NSLRecommendInput): Promise<RecommendationsResponse> {
-      const query = new URLSearchParams({ user_id: String(input.userId), context_key: input.context ?? 'homepage', limit: String(input.limit ?? 10) });
-      if (input.contextId) query.set('context_id', input.contextId);
+      const query = new URLSearchParams({ user_id: String(input.userId), limit: String(input.limit ?? 10) });
+      const resolvedContextId = input.contextId ?? ((input.context ?? 'homepage') === 'homepage' ? defaultContextId : undefined);
+      if (resolvedContextId) query.set('context_id', resolvedContextId); else query.set('context_key', input.context ?? 'homepage');
       if (input.scope) query.set('scope', JSON.stringify(input.scope));
       return request<RecommendationsResponse>(`/recommendations?${query}`, { method: 'GET' });
     },

@@ -13,4 +13,4 @@ import { nsl } from '@neuronsearchlab/nextjs/server';
 const result = await nsl.recommend({ userId: 'visitor-1', context: 'homepage', limit: 10 });
 ```
 
-Vercel Marketplace injects `NSL_API_URL`, `NSL_CLIENT_ID`, `NSL_CLIENT_SECRET`, and `NSL_TOKEN_URL`. Never rename the secret to `NEXT_PUBLIC_*`.
+Vercel Marketplace injects the API/OAuth values plus the default context and event IDs used to support every deployed Core API version. Never rename a secret to `NEXT_PUBLIC_*`.
