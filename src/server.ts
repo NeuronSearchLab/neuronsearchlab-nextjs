@@ -37,16 +37,16 @@ export function createNSL(config: NSLServerConfig = {}) {
   async function request<T>(path: string, init: RequestInit, retry = true): Promise<T> {
     const response = await fetcher(`${apiUrl}${path}`, { ...init, headers: { 'content-type': 'application/json', ...init.headers, authorization: `Bearer ${await token()}` } });
     if (response.status === 401 && retry) { await token(true); return request<T>(path, init, false); }
-    if (!response.ok) throw new Error(`NSL API request failed (${response.status})`);
+    if (!response.ok) throw new Error(`NSL API request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
     return response.json() as Promise<T>;
   }
 
   return {
     track(input: NSLTrackInput) {
       return request('/events', { method: 'POST', body: JSON.stringify({
-        userId: input.userId, eventType: input.event, itemId: input.itemId,
-        ...(input.requestId ? { requestId: input.requestId } : {}),
-        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        user_id: input.userId, type: input.event, item_id: input.itemId,
+        ...(input.requestId ? { request_id: input.requestId } : {}),
+        ...(input.sessionId ? { session_id: input.sessionId } : {}),
         ...(input.metadata ?? {}), client_ts: new Date().toISOString(),
       }) });
     },
