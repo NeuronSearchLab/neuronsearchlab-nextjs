@@ -3,15 +3,16 @@ import type { ItemUpsertPayload, RecommendationsResponse } from '@neuronsearchla
 
 export type NSLTrackInput = {
   userId: string | number;
-  event: string;
-  itemId: string | number;
+  eventId: number;
+  itemId: number;
+  contextId?: number;
   requestId?: string;
   sessionId?: string;
   metadata?: Record<string, unknown>;
 };
 
-export type NSLRecommendInput = { userId: string | number; context?: string; contextId?: string; limit?: number; scope?: Record<string, unknown> };
-export type NSLServerConfig = { apiUrl?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; contextId?: string; eventTypeIds?: Record<string, string>; fetch?: typeof fetch };
+export type NSLRecommendInput = { userId: string | number; contextId?: number; limit?: number; scope?: Record<string, unknown> };
+export type NSLServerConfig = { apiUrl?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; contextId?: number; fetch?: typeof fetch };
 
 function required(value: string | undefined, name: string) {
   if (!value?.trim()) throw new Error(`${name} is required. Connect an NSL Vercel resource or set it server-side.`);
@@ -24,8 +25,8 @@ export function createNSL(config: NSLServerConfig = {}) {
   const clientSecret = required(config.clientSecret ?? process.env.NSL_CLIENT_SECRET, 'NSL_CLIENT_SECRET');
   const tokenUrl = config.tokenUrl ?? process.env.NSL_TOKEN_URL ?? 'https://auth.neuronsearchlab.com/oauth2/token';
   const fetcher = config.fetch ?? fetch;
-  const defaultContextId = config.contextId ?? process.env.NSL_CONTEXT_ID;
-  const eventTypeIds = config.eventTypeIds ?? { view: process.env.NSL_EVENT_VIEW_ID ?? '', click: process.env.NSL_EVENT_CLICK_ID ?? '', purchase: process.env.NSL_EVENT_PURCHASE_ID ?? '' };
+  const envContextId = Number(process.env.NSL_CONTEXT_ID);
+  const defaultContextId = config.contextId ?? (Number.isSafeInteger(envContextId) && envContextId > 0 ? envContextId : undefined);
   let cached: { value: string; expiresAt: number } | undefined;
   async function token(force = false) {
     if (!force && cached && cached.expiresAt > Date.now() + 60_000) return cached.value;
@@ -46,16 +47,19 @@ export function createNSL(config: NSLServerConfig = {}) {
   return {
     track(input: NSLTrackInput) {
       return request('/events', { method: 'POST', body: JSON.stringify({
-        user_id: input.userId, type: eventTypeIds[input.event.toLowerCase()] || input.event, item_id: input.itemId,
+        user_id: input.userId, event_id: input.eventId, item_id: input.itemId,
+        ...(input.contextId ? { context_id: input.contextId } : {}),
         ...(input.requestId ? { request_id: input.requestId } : {}),
         ...(input.sessionId ? { session_id: input.sessionId } : {}),
-        ...(input.metadata ?? {}), client_ts: new Date().toISOString(),
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+        client_ts: new Date().toISOString(),
       }) });
     },
     recommend(input: NSLRecommendInput): Promise<RecommendationsResponse> {
       const query = new URLSearchParams({ user_id: String(input.userId), limit: String(input.limit ?? 10) });
-      const resolvedContextId = input.contextId ?? ((input.context ?? 'homepage') === 'homepage' ? defaultContextId : undefined);
-      if (resolvedContextId) query.set('context_id', resolvedContextId); else query.set('context_key', input.context ?? 'homepage');
+      const resolvedContextId = input.contextId ?? defaultContextId;
+      if (!resolvedContextId) throw new Error('contextId is required and must be the integer ID created by NSL');
+      query.set('context_id', String(resolvedContextId));
       if (input.scope) query.set('scope', JSON.stringify(input.scope));
       return request<RecommendationsResponse>(`/recommendations?${query}`, { method: 'GET' });
     },
@@ -75,8 +79,8 @@ export function createEventRoute(options: { path?: string; maxBodyBytes?: number
     if (new TextEncoder().encode(raw).byteLength > maxBodyBytes) return Response.json({ error: 'payload_too_large' }, { status: 413 });
     let body: NSLTrackInput;
     try { body = JSON.parse(raw); } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }); }
-    if (!body || !['string', 'number'].includes(typeof body.userId) || !['string', 'number'].includes(typeof body.itemId) || typeof body.event !== 'string' || !body.event.trim()) {
-      return Response.json({ error: 'userId, itemId and event are required' }, { status: 400 });
+    if (!body || !['string', 'number'].includes(typeof body.userId) || !Number.isSafeInteger(body.itemId) || body.itemId <= 0 || !Number.isSafeInteger(body.eventId) || body.eventId === 0 || (body.contextId !== undefined && (!Number.isSafeInteger(body.contextId) || body.contextId <= 0))) {
+      return Response.json({ error: 'userId is required; eventId must be a non-zero integer; itemId and optional contextId must be positive integers' }, { status: 400 });
     }
     await nsl.track(body);
     await nsl.flush();

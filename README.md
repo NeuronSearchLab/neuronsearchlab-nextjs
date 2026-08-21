@@ -10,7 +10,7 @@ export const POST = createEventRoute();
 
 ```tsx
 import { nsl } from '@neuronsearchlab/nextjs/server';
-const result = await nsl.recommend({ userId: 'visitor-1', context: 'homepage', limit: 10 });
+const result = await nsl.recommend({ userId: 'visitor-1', contextId: 101, limit: 10 });
 ```
 
 Vercel Marketplace injects the API/OAuth values plus the default context and event IDs used to support every deployed Core API version. Never rename a secret to `NEXT_PUBLIC_*`.
