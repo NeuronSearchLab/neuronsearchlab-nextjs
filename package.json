@@ -2,6 +2,10 @@
   "name": "@neuronsearchlab/nextjs",
   "version": "1.0.0",
   "description": "Server-first NeuronSearchLab SDK for Next.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NeuronSearchLab/neuronsearchlab-nextjs.git"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
