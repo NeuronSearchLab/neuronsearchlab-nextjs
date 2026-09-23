@@ -2,7 +2,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export type BrowserEvent = { userId: string | number; itemId: number; eventId: number; contextId?: number; requestId?: string; sessionId?: string };
-export function trackNSLEvent(event: BrowserEvent, endpoint = '/api/nsl/events') {
+/** A search, sent through the same event route: a query and no item. */
+export type BrowserSearchEvent = { userId: string | number; query: string; resultItemIds?: number[]; eventId?: number; contextId?: number; sessionId?: string };
+export function trackNSLSearch(search: BrowserSearchEvent, endpoint = '/api/nsl/events') {
+  return trackNSLEvent(search, endpoint);
+}
+export function trackNSLEvent(event: BrowserEvent | BrowserSearchEvent, endpoint = '/api/nsl/events') {
   const body = JSON.stringify(event);
   if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
     const accepted = navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
