@@ -1,2 +1,2 @@
-export { createNSL, createEventRoute, nsl } from './server.js';
-export type { NSLRecommendInput, NSLServerConfig, NSLTrackInput } from './server.js';
+export { createNSL, createEventRoute, nsl, searchEventError } from './server.js';
+export type { NSLRecommendInput, NSLSearchEventInput, NSLSearchInput, NSLServerConfig, NSLTrackInput } from './server.js';

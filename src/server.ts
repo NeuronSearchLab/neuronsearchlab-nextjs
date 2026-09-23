@@ -11,6 +11,52 @@ export type NSLTrackInput = {
   metadata?: Record<string, unknown>;
 };
 
+/**
+ * A search, recorded as an event. It steers the user's recommendations by the
+ * weight of your Search event, like any click or purchase. eventId is optional
+ * and defaults to the event your `search` signal is bound to.
+ */
+export type NSLSearchEventInput = {
+  userId: string | number;
+  query: string;
+  /** Item IDs your own search engine showed for `query`, in rank order. */
+  resultItemIds?: number[];
+  eventId?: number;
+  contextId?: number;
+  requestId?: string;
+  sessionId?: string;
+};
+
+export type NSLSearchInput = {
+  query: string;
+  userId?: string | number;
+  contextId?: number;
+  limit?: number;
+  filter?: string | string[];
+  /**
+   * Your own engine ran `query` and showed these item IDs. NSL records the
+   * search and returns recommendations that complement them (these IDs are
+   * left out of the response).
+   */
+  resultItemIds?: number[];
+};
+
+const isPositiveInteger = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
+
+function validResultItemIds(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(isPositiveInteger);
+}
+
+/** The error message for a malformed search event, or null when it is valid. */
+export function searchEventError(body: Partial<NSLSearchEventInput> | null | undefined): string | null {
+  if (!body || !['string', 'number'].includes(typeof body.userId)) return 'userId is required';
+  if (typeof body.query !== 'string' || !body.query.trim()) return 'query must contain text';
+  if (body.eventId !== undefined && (!Number.isSafeInteger(body.eventId) || body.eventId === 0)) return 'eventId must be a non-zero integer when provided';
+  if (body.contextId !== undefined && !isPositiveInteger(body.contextId)) return 'contextId must be a positive integer';
+  if (body.resultItemIds !== undefined && !validResultItemIds(body.resultItemIds)) return 'resultItemIds must be positive integer item IDs returned by NSL';
+  return null;
+}
+
 export type NSLRecommendInput = { userId: string | number; contextId?: number; limit?: number; scope?: Record<string, unknown> };
 export type NSLServerConfig = { apiUrl?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; contextId?: number; fetch?: typeof fetch };
 
@@ -55,6 +101,34 @@ export function createNSL(config: NSLServerConfig = {}) {
         client_ts: new Date().toISOString(),
       }) });
     },
+    trackSearch(input: NSLSearchEventInput) {
+      const error = searchEventError(input);
+      if (error) return Promise.reject(new Error(error));
+      return request('/events', { method: 'POST', body: JSON.stringify({
+        user_id: input.userId, query: input.query.trim(),
+        ...(input.resultItemIds ? { result_item_ids: input.resultItemIds } : {}),
+        ...(input.eventId !== undefined ? { event_id: input.eventId } : {}),
+        ...(input.contextId ? { context_id: input.contextId } : {}),
+        ...(input.requestId ? { request_id: input.requestId } : {}),
+        ...(input.sessionId ? { session_id: input.sessionId } : {}),
+        client_ts: new Date().toISOString(),
+      }) });
+    },
+    search(input: NSLSearchInput): Promise<RecommendationsResponse & { query?: string; search?: Record<string, unknown> }> {
+      if (typeof input.query !== 'string' || !input.query.trim()) return Promise.reject(new Error('query is required'));
+      if (input.resultItemIds !== undefined && !validResultItemIds(input.resultItemIds)) {
+        return Promise.reject(new Error('resultItemIds must be positive integer item IDs returned by NSL'));
+      }
+      const contextId = input.contextId ?? defaultContextId;
+      return request('/search', { method: 'POST', body: JSON.stringify({
+        query: input.query.trim(),
+        ...(input.userId !== undefined ? { user_id: String(input.userId) } : {}),
+        ...(contextId ? { context_id: contextId } : {}),
+        ...(input.limit ? { limit: String(input.limit) } : {}),
+        ...(input.filter ? { filter: input.filter } : {}),
+        ...(input.resultItemIds ? { result_item_ids: input.resultItemIds } : {}),
+      }) });
+    },
     recommend(input: NSLRecommendInput): Promise<RecommendationsResponse> {
       const query = new URLSearchParams({ user_id: String(input.userId), limit: String(input.limit ?? 10) });
       const resolvedContextId = input.contextId ?? defaultContextId;
@@ -77,12 +151,20 @@ export function createEventRoute(options: { path?: string; maxBodyBytes?: number
     if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return Response.json({ error: 'content_type_must_be_json' }, { status: 415 });
     const raw = await request.text();
     if (new TextEncoder().encode(raw).byteLength > maxBodyBytes) return Response.json({ error: 'payload_too_large' }, { status: 413 });
-    let body: NSLTrackInput;
+    let body: Partial<NSLTrackInput> & Partial<NSLSearchEventInput>;
     try { body = JSON.parse(raw); } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }); }
-    if (!body || !['string', 'number'].includes(typeof body.userId) || !Number.isSafeInteger(body.itemId) || body.itemId <= 0 || !Number.isSafeInteger(body.eventId) || body.eventId === 0 || (body.contextId !== undefined && (!Number.isSafeInteger(body.contextId) || body.contextId <= 0))) {
+    // A query with no item is a search event.
+    if (body && body.itemId === undefined && typeof body.query === 'string') {
+      const error = searchEventError(body);
+      if (error) return Response.json({ error }, { status: 400 });
+      await nsl.trackSearch(body as NSLSearchEventInput);
+      await nsl.flush();
+      return Response.json({ ok: true }, { status: 202, headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (!body || !['string', 'number'].includes(typeof body.userId) || !Number.isSafeInteger(body.itemId) || (body.itemId as number) <= 0 || !Number.isSafeInteger(body.eventId) || body.eventId === 0 || (body.contextId !== undefined && (!Number.isSafeInteger(body.contextId) || body.contextId <= 0))) {
       return Response.json({ error: 'userId is required; eventId must be a non-zero integer; itemId and optional contextId must be positive integers' }, { status: 400 });
     }
-    await nsl.track(body);
+    await nsl.track(body as NSLTrackInput);
     await nsl.flush();
     return Response.json({ ok: true }, { status: 202, headers: { 'Cache-Control': 'no-store' } });
   };
