@@ -13,7 +13,7 @@ describe('event route', () => {
   });
 });
 
-import { createNSL } from '../src/server';
+import { createNSL, MAX_RECOMMENDATION_SETS_PER_BATCH } from '../src/server';
 
 function recordingFetch() {
   const calls: Array<{ url: string; body: any }> = [];
@@ -60,5 +60,61 @@ describe('searches', () => {
     }));
     expect(response.status).toBe(400);
     expect((await response.json()).error).toContain('resultItemIds');
+  });
+});
+
+describe('recommendation sets', () => {
+  const config = { clientId: 'id', clientSecret: 'secret', apiUrl: 'https://api.example.com/v1' };
+
+  function batchFetch() {
+    const calls: Array<{ url: string; body: any }> = [];
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      if (String(url).includes('oauth2')) return Response.json({ access_token: 't', expires_in: 3600 });
+      const body = JSON.parse(String(init.body));
+      calls.push({ url: String(url), body });
+      return Response.json({
+        object: 'recommendation_set_list',
+        results: body.requests.map((set: any) => ({ key: set.key, status: 200, request_id: `${set.key}-id`, context_id: set.context_id, data: [] })),
+        usage: { sets: body.requests.length, computed: body.requests.length, reused: 0, coalesced: 0 },
+      });
+    });
+    return { calls, fetcher: fetcher as unknown as typeof fetch };
+  }
+
+  it('sends every rail in one batch request', async () => {
+    const { calls, fetcher } = batchFetch();
+    const response = await createNSL({ ...config, fetch: fetcher }).recommendSets({
+      userId: 'u1',
+      requestId: '11111111-1111-4111-8111-111111111111',
+      sets: [{ key: 'for_you', contextId: 101, limit: 12 }, { key: 'similar', contextId: 102, itemId: 55, filters: ['type:van'] }],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.example.com/v1/recommendations/batch');
+    expect(calls[0].body).toEqual({
+      user_id: 'u1',
+      request_id: '11111111-1111-4111-8111-111111111111',
+      requests: [{ key: 'for_you', context_id: 101, limit: 12 }, { key: 'similar', context_id: 102, item_id: 55, filters: ['type:van'] }],
+    });
+    expect(response.sets.similar.request_id).toBe('similar-id');
+    expect(response.usage).toEqual({ sets: 2, computed: 2, reused: 0, coalesced: 0 });
+  });
+
+  it('splits a page with more rails than one batch holds', async () => {
+    const { calls, fetcher } = batchFetch();
+    const sets = Array.from({ length: MAX_RECOMMENDATION_SETS_PER_BATCH + 1 }, (_, i) => ({ key: `rail_${i}`, contextId: i + 1 }));
+    const response = await createNSL({ ...config, fetch: fetcher }).recommendSets({ userId: 'u1', sets });
+    expect(calls.map(call => call.body.requests.length)).toEqual([MAX_RECOMMENDATION_SETS_PER_BATCH, 1]);
+    expect(response.results.map(result => result.key)).toEqual(sets.map(set => set.key));
+    expect(response.usage.sets).toBe(sets.length);
+  });
+
+  it('rejects sets the API would refuse before calling it', async () => {
+    const { calls, fetcher } = batchFetch();
+    const nsl = createNSL({ ...config, fetch: fetcher });
+    await expect(nsl.recommendSets({ userId: 'u', sets: [] })).rejects.toThrow(/non-empty/);
+    await expect(nsl.recommendSets({ userId: 'u', sets: [{ key: 'bad key', contextId: 1 }] })).rejects.toThrow(/must match/);
+    await expect(nsl.recommendSets({ userId: 'u', sets: [{ key: 'a', contextId: 1 }, { key: 'a', contextId: 2 }] })).rejects.toThrow(/Duplicate/);
+    await expect(nsl.recommendSets({ userId: 'u', sets: [{ key: 'a' }] })).rejects.toThrow(/contextId/);
+    expect(calls).toHaveLength(0);
   });
 });
