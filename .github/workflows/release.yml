@@ -1,9 +1,13 @@
 name: Publish Package
 
+# Pull requests run verify. A push to main publishes package.json's version
+# when npm does not have it yet, so bumping the version is the release.
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -24,6 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - name: Publish when this version is not already on npm
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           package_name=$(node -p "require('./package.json').name")

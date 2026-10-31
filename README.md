@@ -15,6 +15,23 @@ const result = await nsl.recommend({ userId: 'visitor-1', contextId: 101, limit:
 
 Vercel Marketplace injects the API/OAuth values plus the default context and event IDs used to support every deployed Core API version. Never rename a secret to `NEXT_PUBLIC_*`.
 
+## Several rails on one page
+
+Ask for every rail in one request. Each set is billed as its own recommendation set; the work they share (the visitor's history, identical sets) is done once. Up to eight sets go in one batch, and larger pages are split for you.
+
+```ts
+import { nsl } from '@neuronsearchlab/nextjs/server';
+
+const { sets } = await nsl.recommendSets({
+  userId: 'visitor-1',
+  sets: [
+    { key: 'for_you', contextId: 101, limit: 12 },
+    { key: 'similar', contextId: 102, itemId: 3187, limit: 6 },
+  ],
+});
+// sets.for_you.data, sets.similar.data; a failed set carries its own status and error.
+```
+
 ## Searches
 
 A search is an event: it steers the user's recommendations by the weight of your Search event, like any click or purchase.
