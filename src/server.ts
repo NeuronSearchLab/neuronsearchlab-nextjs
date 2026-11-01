@@ -58,13 +58,23 @@ export function searchEventError(body: Partial<NSLSearchEventInput> | null | und
 }
 
 export type NSLRecommendInput = { userId: string | number; contextId?: number; limit?: number; scope?: Record<string, unknown> };
-export type NSLRecommendSetInput = { key: string; contextId?: number; limit?: number; itemId?: number; filters?: string[]; scope?: Record<string, unknown> };
-export type NSLRecommendSetsInput = { userId: string | number; sessionId?: string; requestId?: string; sets: NSLRecommendSetInput[] };
+/** In a group request, a set without a key adjusts the group's rail for that contextId. */
+export type NSLRecommendSetInput = { key?: string; contextId?: number; limit?: number; itemId?: number; filters?: string[]; scope?: Record<string, unknown> };
+/**
+ * `groupId` loads every rail of a context group (Contexts page) under its
+ * context key, in the group's order, with the group's rules; `limit` sizes
+ * every rail, and `sets` becomes optional.
+ */
+export type NSLRecommendSetsInput = {
+  userId: string | number; sessionId?: string; requestId?: string;
+  groupId?: number; limit?: number; sets?: NSLRecommendSetInput[];
+};
 export type NSLRecommendationSetResult = Partial<RecommendationsResponse> & {
   key: string; status: number; request_id: string; context_id: number;
   error?: { code?: string; message?: string };
 };
 export type NSLRecommendationSetsResponse = {
+  group_id?: number;
   results: NSLRecommendationSetResult[];
   sets: Record<string, NSLRecommendationSetResult>;
   usage: { sets: number; computed: number; reused: number; coalesced: number };
@@ -159,36 +169,47 @@ export function createNSL(config: NSLServerConfig = {}) {
      * (the visitor's history, identical sets) is done once.
      */
     async recommendSets(input: NSLRecommendSetsInput): Promise<NSLRecommendationSetsResponse> {
-      if (!Array.isArray(input.sets) || input.sets.length === 0) throw new Error('sets must be a non-empty array');
+      const group = input.groupId;
+      if (group !== undefined && !isPositiveInteger(group)) throw new Error('groupId must be a positive integer');
+      if (input.limit !== undefined && group === undefined) throw new Error('limit applies to a group request; give each set its own limit');
+      const inputSets = input.sets ?? [];
+      if (!Array.isArray(inputSets) || (inputSets.length === 0 && group === undefined)) throw new Error('sets must be a non-empty array, or pass a groupId');
       const seen = new Set<string>();
-      const sets = input.sets.map(set => {
-        if (!SET_KEY.test(set.key)) throw new Error(`set key "${set.key}" must match ${SET_KEY.source}`);
-        if (seen.has(set.key)) throw new Error(`Duplicate set key "${set.key}"`);
-        seen.add(set.key);
-        const contextId = set.contextId ?? defaultContextId;
-        if (!isPositiveInteger(contextId)) throw new Error(`set "${set.key}" needs a contextId: the integer ID created by NSL`);
+      const sets = inputSets.map(set => {
+        // A group request may adjust one of the group's rails without naming it.
+        const adjustsRail = group !== undefined && set.key === undefined;
+        if (!adjustsRail) {
+          if (!SET_KEY.test(set.key ?? '')) throw new Error(`set key "${set.key}" must match ${SET_KEY.source}`);
+          if (seen.has(set.key!)) throw new Error(`Duplicate set key "${set.key}"`);
+          seen.add(set.key!);
+        }
+        const contextId = adjustsRail ? set.contextId : set.contextId ?? defaultContextId;
+        if (!isPositiveInteger(contextId)) throw new Error(`set "${set.key ?? '(group rail)'}" needs a contextId: the integer ID created by NSL`);
         return {
-          key: set.key, context_id: contextId,
+          ...(set.key !== undefined ? { key: set.key } : {}), context_id: contextId,
           ...(set.limit !== undefined ? { limit: set.limit } : {}),
           ...(set.itemId !== undefined ? { item_id: set.itemId } : {}),
           ...(set.filters?.length ? { filters: set.filters } : {}),
           ...(set.scope ? { scope: set.scope } : {}),
         };
       });
-      const chunks: typeof sets[] = [];
-      for (let start = 0; start < sets.length; start += MAX_RECOMMENDATION_SETS_PER_BATCH) chunks.push(sets.slice(start, start + MAX_RECOMMENDATION_SETS_PER_BATCH));
+      // The API expands a group, so a group request is never split here.
+      const chunks: typeof sets[] = group !== undefined ? [sets] : [];
+      if (group === undefined) for (let start = 0; start < sets.length; start += MAX_RECOMMENDATION_SETS_PER_BATCH) chunks.push(sets.slice(start, start + MAX_RECOMMENDATION_SETS_PER_BATCH));
       const responses = await Promise.all(chunks.map((requests, index) => request<Omit<NSLRecommendationSetsResponse, 'sets'>>('/recommendations/batch', { method: 'POST', body: JSON.stringify({
         user_id: String(input.userId),
         ...(input.sessionId ? { session_id: input.sessionId } : {}),
         // A retry with the same requestId is billed once. It names the first
         // chunk; the API gives any further chunk its own id.
         ...(input.requestId && index === 0 ? { request_id: input.requestId } : {}),
+        ...(group !== undefined ? { group_id: group } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
         requests,
       }) })));
       const results = responses.flatMap(response => response.results ?? []);
       const usage = { sets: 0, computed: 0, reused: 0, coalesced: 0 };
       for (const response of responses) for (const field of Object.keys(usage) as Array<keyof typeof usage>) usage[field] += response.usage?.[field] ?? 0;
-      return { results, sets: Object.fromEntries(results.map(result => [result.key, result])), usage };
+      return { ...(group !== undefined ? { group_id: group } : {}), results, sets: Object.fromEntries(results.map(result => [result.key, result])), usage };
     },
     syncContent(items: ItemUpsertPayload | ItemUpsertPayload[]) { return request('/items', { method: 'POST', body: JSON.stringify(items) }, true, [409]); },
     flush() { return Promise.resolve(); },
