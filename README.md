@@ -32,6 +32,12 @@ const { sets } = await nsl.recommendSets({
 // sets.for_you.data, sets.similar.data; a failed set carries its own status and error.
 ```
 
+Load a context group (grouped on the Contexts page) by its ID instead: every rail comes back under its context key, in the group's order, under the group's rules. A keyless set adjusts one of the group's rails.
+
+```ts
+const { sets } = await nsl.recommendSets({ userId: 'visitor-1', groupId: 12, limit: 12, sets: [{ contextId: 102, itemId: 3187 }] });
+```
+
 ## Searches
 
 A search is an event: it steers the user's recommendations by the weight of your Search event, like any click or purchase.

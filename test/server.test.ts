@@ -117,4 +117,19 @@ describe('recommendation sets', () => {
     await expect(nsl.recommendSets({ userId: 'u', sets: [{ key: 'a' }] })).rejects.toThrow(/contextId/);
     expect(calls).toHaveLength(0);
   });
+
+  it('loads a context group by ID in one batch', async () => {
+    const { calls, fetcher } = batchFetch();
+    const response = await createNSL({ ...config, fetch: fetcher }).recommendSets({
+      userId: 'u1', groupId: 12, limit: 6, sets: [{ contextId: 2324, itemId: 3187 }],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body).toEqual({ user_id: 'u1', group_id: 12, limit: 6, requests: [{ context_id: 2324, item_id: 3187 }] });
+    expect(response.group_id).toBe(12);
+    const nsl = createNSL({ ...config, fetch: fetcher });
+    await nsl.recommendSets({ userId: 'u1', groupId: 12 });
+    expect(calls[1].body.requests).toEqual([]);
+    await expect(nsl.recommendSets({ userId: 'u', groupId: 0 })).rejects.toThrow(/groupId/);
+    await expect(nsl.recommendSets({ userId: 'u', limit: 5, sets: [{ key: 'a', contextId: 1 }] })).rejects.toThrow(/group request/);
+  });
 });
